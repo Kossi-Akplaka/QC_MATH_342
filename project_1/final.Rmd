@@ -1,0 +1,129 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+Let's load the data set $housing_data_2016_2017$
+
+```{r}
+rm(list = ls())
+pacman::p_load( tidyr,data.table, magrittr, mlr, missForest, lubridate, skimr)
+housing_data1= data.table(housing_data_2016_2017)
+str(housing_data1)
+head(housing_data1)
+
+
+```
+Let's clean the data in order to keep the features we care about
+
+```{r}
+# let's keep the data we need
+
+housing_data1 = housing_data1[  ,.(approx_year_built, cats_allowed, common_charges , coop_condo,dogs_allowed, fuel_type, full_address_or_zip_code, kitchen_type,num_bedrooms, num_floors_in_building,pct_tax_deductibl  , garage_exists, parking_charges, sale_price, maintenance_cost, sq_footage, total_taxes, walk_score)]
+
+
+
+#correction of the data
+housing_data1 = housing_data1[ , garage_exists := tolower(garage_exists)]# lowercase in garage_exists
+housing_data1 = housing_data1[ , kitchen_type := tolower(kitchen_type)]# lowercase in kitchen_type
+housing_data1$kitchen_type[ housing_data1$kitchen_type == "eatin"] = "eat in" 
+housing_data1$kitchen_type[ housing_data1$kitchen_type == "efficiency chicken"] = "efficiency" 
+housing_data1$kitchen_type[ housing_data1$kitchen_type == 1955] = NA 
+#drop the dollar 
+
+
+#convert in type factor
+housing_data1[, coop_condo := factor(coop_condo)] 
+housing_data1[ , fuel_type := factor(fuel_type)]
+housing_data1[, kitchen_type := factor(kitchen_type)]
+
+#convert in type boolean
+housing_data1$cats_allowed = housing_data1[ , .(ifelse(cats_allowed =="yes", 1 , 0))]
+housing_data1$dogs_allowed = housing_data1[,. (ifelse(dogs_allowed =="yes", 1 , 0))]
+housing_data1$garage_exists = housing_data1[, .(ifelse(garage_exists == "yes" | garage_exists =="Underground", 1,0))]
+housing_data1$garage_exists[is.na(housing_data1$garage_exists)] = 0
+
+
+#order the columns
+housing_data1 = setcolorder( housing_data1, "sale_price" )
+
+```
+Now, we will fix the missing data
+
+
+```{r}
+pacman::p_load(nycflights13, tidyverse, magrittr, data.table, skimr)
+skim(housing_data1)
+housing_data1$sale_price= housing_data1[ , .(sale_price = as.numeric(gsub("[$,]", "", sale_price)))]
+housing_data1$maintenance_cost= housing_data1[ , .(maintenance_cost = as.numeric(gsub("[$,]", "", maintenance_cost)))]
+housing_data1$common_charges= housing_data1[ , .(common_charges = as.numeric(gsub("[$,]", "", common_charges)))]
+housing_data1$parking_charges = housing_data1[ , .(parking_charges = as.numeric(gsub("[$,]", "", parking_charges)))]
+housing_data1$total_taxes  = housing_data1[ , .(total_taxes  = as.numeric(gsub("[$,]", "", total_taxes )))]
+housing_data1$zip_code = housing_data1[ , .(as.numeric((zip_code = str_extract(full_address_or_zip_code, "[0-9]{5}"))))]
+housing_data1 =housing_data1[, !("full_address_or_zip_code")]
+
+
+ #imputating housing_data1
+M= tbl_df(apply(is.na(housing_data1), 2, as.numeric))
+colnames(M) = paste("is_missing_", colnames(housing_data1), sep = "")
+skim(housing_data1)
+
+#missForest
+ pacman::p_load(missForest)
+M %<>% 
+   select_if(function(x){sum(x) > 0})
+Ximp = missForest(data.frame(housing_data1))$ximp
+Ximp
+
+
+
+#Regression Tree Modeling
+test_prop = 0.1
+train_indices = sample(1 : nrow(Ximp), round((1 - test_prop) * nrow(Ximp)))
+Ximp_train = Ximp[train_indices, ]
+ y_train = Ximp_train$sale_price
+ X_train = Ximp_train
+ X_train$sale_price = NULL
+ n_train = nrow(X_train)
+test_indices = setdiff(1 : nrow(Ximp), train_indices)
+Ximp_test = Ximp[test_indices, ]
+y_test = Ximp$sale_price
+X_test = Ximp_test
+X_test$sale_price= NULL
+ 
+
+install.packages("rpart")
+library(rpart)
+#in sample
+tree = rpart(y_train ~ ., Ximp_train)
+y_hat_train = predict(tree, Ximp_train)
+e = y_train - y_hat_train
+sd(e)
+
+#out of sample
+y_hat_test = predict(tree, Ximp_test)
+e = y_test -  y_hat_test
+sd(e)
+```
+linear model
+
+
+```{r}
+#out_of_sample
+linear_model = lm(y_train ~ ., Ximp_train)
+summary(linear_model)$r.squared
+sd(linear_model$residuals)
+y_hat_oos = predict(linear_model, Ximp_test)
+oos_residuals = y_test - y_hat_oos
+sd(oos_residuals)
+```
+random forest 
+```{r}
+install.packages("mlr3")
+install.packages("randomForest")
+library(randomForest)
+random_forest_model = randomForest(sale_price ~ ., Ximp)
+random_forest_model
+
+```
+
